@@ -21,6 +21,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
@@ -122,8 +123,8 @@ public class VimeoItemSimilarity extends AbstractJob {
 
 	    if (shouldRunNextPhase(parsedArgs, currentPhase)) {
 	      Job mostSimilarItems = prepareJob(similarityMatrixPath, getOutputPath(), SequenceFileInputFormat.class,
-	          SimilarItemsMapper.class, LongWritable.class, ClipSimilarityWritable.class,
-	          SimilarItemsReducer.class, LongWritable.class, ClipSimilarityWritable.class, TextOutputFormat.class);
+	          SimilarItemsMapper.class, Text.class, Text.class,
+	          SimilarItemsReducer.class, Text.class, Text.class, TextOutputFormat.class);
 	      Configuration mostSimilarItemsConf = mostSimilarItems.getConfiguration();
 	      mostSimilarItemsConf.set(ITEM_ID_INDEX_PATH_STR,
 	          new Path(prepPath, PreparePreferenceMatrixJob.ITEMID_INDEX).toString());
@@ -138,16 +139,16 @@ public class VimeoItemSimilarity extends AbstractJob {
 	}
 	
 	public static class SimilarItemsMapper
-     extends Mapper<IntWritable,VectorWritable,LongWritable,ClipSimilarityWritable> {
+     extends Mapper<IntWritable,VectorWritable,Text,Text> {
 
-   private OpenIntLongHashMap indexItemIDMap;
+   
    private int maxSimilarItemsPerItem;
 
    @Override
    protected void setup(Context ctx) {
      Configuration conf = ctx.getConfiguration();
      maxSimilarItemsPerItem = conf.getInt(MAX_SIMILARITIES_PER_ITEM, -1);
-     indexItemIDMap = TasteHadoopUtils.readIDIndexMap(conf.get(ITEM_ID_INDEX_PATH_STR), conf);
+//     indexItemIDMap = TasteHadoopUtils.readIDIndexMap(conf.get(ITEM_ID_INDEX_PATH_STR), conf);
 
      Preconditions.checkArgument(maxSimilarItemsPerItem > 0, "maxSimilarItemsPerItem must be greater then 0!");
    }
@@ -164,31 +165,67 @@ public class VimeoItemSimilarity extends AbstractJob {
        SimilarItem top = topKMostSimilarItems.top();
        double candidateSimilarity = element.get();
        if (candidateSimilarity > top.getSimilarity()) {
-         top.set(indexItemIDMap.get(element.index()), candidateSimilarity);
+//         top.set(indexItemIDMap.get(element.index()), candidateSimilarity);
+    	   top.set(element.index(), candidateSimilarity);
          topKMostSimilarItems.updateTop();
        }
      }
-
-     long itemID = indexItemIDMap.get(itemIDIndex);
+     
+//     long itemID = indexItemIDMap.get(itemIDIndex);
      for (SimilarItem similarItem : topKMostSimilarItems.getTopItems()) {
        long otherItemID = similarItem.getItemID();
-       if (itemID < otherItemID) {
-         ctx.write(new LongWritable(itemID),new ClipSimilarityWritable(otherItemID,similarItem.getSimilarity()));
+       if (itemIDIndex < otherItemID) {
+    	 Text key=new Text(Long.toString(itemIDIndex)+":"+Long.toString(otherItemID).toString());
+    	 Text value=new Text(Double.toString(similarItem.getSimilarity()));
+    	 
+         ctx.write(key,value);
        } else {
-         ctx.write(new LongWritable(otherItemID),new ClipSimilarityWritable(itemID,similarItem.getSimilarity()));
+    	  Text key=new Text(Long.toString(otherItemID)+":"+Long.toString(itemIDIndex).toString());
+      	 Text value=new Text(Double.toString(similarItem.getSimilarity()));
+         ctx.write(key,value);
        }
      }
+//     long itemID = indexItemIDMap.get(itemIDIndex);
+//     for (SimilarItem similarItem : topKMostSimilarItems.getTopItems()) {
+//       long otherItemID = similarItem.getItemID();
+//       if (itemID < otherItemID) {
+//    	 Text key=new Text(Long.toString(itemID)+":"+Long.toString(otherItemID).toString());
+//    	 Text value=new Text(Double.toString(similarItem.getSimilarity()));
+//    	 
+//         ctx.write(key,value);
+//       } else {
+//    	  Text key=new Text(Long.toString(otherItemID)+":"+Long.toString(itemID).toString());
+//      	 Text value=new Text(Double.toString(similarItem.getSimilarity()));
+//         ctx.write(key,value);
+//       }
+//     }
    }
  }
 
  public static class SimilarItemsReducer
-     extends Reducer<LongWritable,ClipSimilarityWritable,LongWritable,ClipSimilarityWritable> {
+     extends Reducer<Text,Text,Text,Text> {
+	 
+	 private OpenIntLongHashMap indexItemIDMap;
+	 
+	 @Override
+	   protected void setup(Context ctx) {
+	     Configuration conf = ctx.getConfiguration();
+	     indexItemIDMap = TasteHadoopUtils.readIDIndexMap(conf.get(ITEM_ID_INDEX_PATH_STR), conf);
+	   }
+	 
    @Override
-   protected void reduce(LongWritable clipId, Iterable<ClipSimilarityWritable> values, Context ctx)
-     throws IOException, InterruptedException {
-
-     ctx.write(clipId,values.iterator().next() );
+   protected void reduce(Text key,Iterable<Text> values,Context ctx) throws IOException, InterruptedException
+   {
+	   long clip1=indexItemIDMap.get(Integer.parseInt(key.toString().split(":")[0]));
+	   long clip2=indexItemIDMap.get(Integer.parseInt(key.toString().split(":")[1]));
+	   Text newKey=new Text(Long.toString(clip1)+":"+Long.toString(clip2));
+	   ctx.write(newKey, values.iterator().next());
    }
+//   protected void reduce(Text key, Iterable<Text> values, Context ctx)
+//     throws IOException, InterruptedException {
+//	   
+//     ctx.write(key,values.iterator().next() );
+//   }
  }
 
 }
